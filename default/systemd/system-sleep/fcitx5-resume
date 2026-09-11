@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Restart fcitx5 after resume so the lock screen can accept typing again.
+#
+# fcitx5 can come back from suspend unresponsive. The lock screen is Qt and
+# QT_IM_MODULE=fcitx is set session-wide, so its password field hands every key
+# to fcitx5 and a wedged one swallows them all. The field still shows its
+# placeholder, so this reads as a frozen machine.
+
+if [[ $1 == "post" ]]; then
+  # The post hook still runs inside systemd-suspend.service. A background child
+  # stays in that unit's cgroup and is killed when the unit exits, so schedule
+  # the restart as its own transient system unit instead.
+  systemd-run --quiet --collect --on-active=1s --timer-property=AccuracySec=100ms \
+    "$0" restore >/dev/null 2>&1 || true
+fi
+
+if [[ $1 == "restore" ]]; then
+  for uid_dir in /run/user/*; do
+    uid=$(basename "$uid_dir")
+    if [[ -S $uid_dir/bus ]]; then
+      # try-restart leaves a session without a running fcitx5 alone, so a
+      # non-graphical login never gets one without WAYLAND_DISPLAY.
+      sudo -u "#$uid" env \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=$uid_dir/bus" \
+        XDG_RUNTIME_DIR="$uid_dir" \
+        systemctl --user try-restart omarchy-fcitx5.service 2>/dev/null || true
+    fi
+  done
+fi
